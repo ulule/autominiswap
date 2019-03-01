@@ -1,0 +1,22 @@
+<html>
+
+<a href="{{.CSVPath}}">Download csv</a>
+<a href="{{.XLSXPath}}">Download xlsx</a>
+
+<hr>
+
+<table border="1">
+    <tr>
+        {{range .CSVHeader}}<th align="center">{{.}}</th>{{end}}
+    </tr>
+    {{range .Records}}
+    <tr align="top">
+        <td align="left">{{.Name}}</td>
+        <td align="left">{{.Department}}</td>
+        <td align="left">{{.Goes}}</td>
+        <td align="left">{{.LunchTeam}}</td>
+    </tr>
+    {{end}}
+</table>
+
+</html>
