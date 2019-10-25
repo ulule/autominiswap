@@ -11,14 +11,15 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/net/html"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -32,6 +33,8 @@ func main() {
 			addr:     os.Getenv("LUCCA_ADDR"),
 			login:    os.Getenv("LUCCA_LOGIN"),
 			password: os.Getenv("LUCCA_PASSWORD"),
+
+			client: http.DefaultClient,
 		},
 		tmpl: template.Must(template.ParseFiles("templates/index.html")),
 
@@ -184,8 +187,10 @@ type LuccaClient struct {
 	addr            string
 	login, password string
 
+	client *http.Client
+
 	sync.Mutex
-	cookie string
+	loggedin bool
 }
 
 type luccaUser struct {
@@ -209,9 +214,8 @@ func (c *LuccaClient) fetchUsers(ctx context.Context) ([]luccaUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Cookie", c.cookie)
 
-	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	resp, err := c.client.Do(req.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -262,9 +266,8 @@ func (c *LuccaClient) fetchLeaves(ctx context.Context) ([]luccaLeave, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Cookie", c.cookie)
 
-	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	resp, err := c.client.Do(req.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -298,42 +301,117 @@ func nextSwap() (monday, friday time.Time) {
 	return monday, friday
 }
 
-// doLogin sets c.cookie. It returns early if c.cookie is already set.
-// It is safe to use from different goroutines
 func (c *LuccaClient) doLogin(ctx context.Context) error {
 	c.Lock()
 	defer c.Unlock()
-	if c.cookie != "" {
+
+	// TODO: redo login if cookie has expired
+	if c.loggedin {
 		return nil
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.addr+"/login", strings.NewReader(url.Values{
-		"Login":           []string{c.login},
-		"Password":        []string{c.password},
-		"PersistentCooke": []string{"false"},
-	}.Encode()))
+	// add a cookie jar to c.client
+	if c.client.Jar == nil {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return err
+		}
+		c.client.Jar = jar
+	}
+
+	values, err := c.getLogin(ctx)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := c.postLogin(ctx, values); err != nil {
+		return err
+	}
+	c.loggedin = true
 
-	var httpClient = &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	return nil
+}
+
+func (c *LuccaClient) getLogin(ctx context.Context) (url.Values, error) {
+	resp, err := c.client.Get(c.addr + "/identity/login")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("getLogin: expected %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	resp, err := httpClient.Do(req.WithContext(ctx))
+	// parse login form
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		findFormElement func(*html.Node)
+		formElement     *html.Node
+	)
+	findFormElement = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "form" {
+			formElement = n
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if formElement != nil {
+				break
+			}
+			findFormElement(c)
+		}
+	}
+	findFormElement(doc)
+	if formElement == nil {
+		return nil, fmt.Errorf("getLogin: couldn't find form element")
+	}
+
+	// find all inputs
+	var (
+		findInputElements func(n *html.Node)
+		inputElements     []*html.Node
+	)
+	findInputElements = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "input" {
+			inputElements = append(inputElements, n)
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			findInputElements(c)
+		}
+	}
+	findInputElements(formElement)
+
+	values := make(url.Values)
+	for _, input := range inputElements {
+		var key, value string
+		for _, attr := range input.Attr {
+			if attr.Key == "name" {
+				key = attr.Val
+			} else if attr.Key == "value" {
+				value = attr.Val
+			}
+		}
+		if key != "" && value != "" {
+			values[key] = []string{value}
+		}
+	}
+	return values, nil
+}
+
+func (c *LuccaClient) postLogin(ctx context.Context, values url.Values) error {
+	values.Set("UserName", c.login)
+	values.Set("Password", c.password)
+	resp, err := c.client.PostForm(c.addr+"/identity/login", values)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	cookies := resp.Cookies()
-	if len(cookies) != 1 {
-		return errors.New("couldn't login to lucca, credentials are probably wrong")
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("postLogin: expected %d, got %d", http.StatusOK, resp.StatusCode)
 	}
-	c.cookie = cookies[0].String()
 	return nil
 }
 
