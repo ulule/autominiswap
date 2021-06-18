@@ -125,7 +125,7 @@ HELP = 'swap.py -s <swap_group_size>'
 
 if __name__ == '__main__':
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hs:", ["swap-group=", "lunch-group=")
+        opts, args = getopt.getopt(sys.argv[1:], "hs:", ["swap-group="])
     except getopt.GetoptError:
         print(HELP)
         sys.exit(2)
