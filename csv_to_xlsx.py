@@ -47,7 +47,7 @@ def csv_to_xlsx(csv_input):
     reader = csv.reader(csv_input, delimiter=',')
     for r, row in enumerate(reader):
         for c, col in enumerate(row):
-            if c == len(row) - 1:
+            if c == len(row) - 2:
                 cell_format = workbook.add_format({'bg_color': get_color(col), 'align': 'center'})
                 worksheet.write(r, c, col, cell_format)
             elif c == 0:
@@ -56,9 +56,8 @@ def csv_to_xlsx(csv_input):
                 worksheet.write(r, c, col, center)
 
     worksheet.set_column(0, 0, 30)
-    worksheet.set_column(1, 1, 40)
+    worksheet.set_column(1, 1, 15)
     worksheet.set_column(2, 2, 30)
-    worksheet.set_column(3, 3, 15)
     workbook.close()
 
     return output

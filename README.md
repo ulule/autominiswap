@@ -18,7 +18,6 @@ The following config variables are optional
 ```
 heroku config:set LEGAL_ENTITY="FOO SAS" # keep only people from this lucca legal entity
 heroku config:set SWAP_EXCLUSION="alice,bob" # comma-separated list of people name
-heroku config:set SWAP_LUNCH_EXCLUSION="alice,bob"
 ```
 
 Good luck! Do not hesitate to open issues.

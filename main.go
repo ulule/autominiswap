@@ -98,9 +98,8 @@ type Resource struct {
 
 type ResourceRecord struct {
 	Name       string
-	Department string
-	Goes       string
-	LunchTeam  string
+	CoffeeTeam string
+	Team       string
 }
 
 func (h *handler) handle(ctx context.Context) (*Resource, error) {
@@ -129,9 +128,8 @@ func (h *handler) handle(ctx context.Context) (*Resource, error) {
 	for _, record := range records[1:] {
 		resource.Records = append(resource.Records, ResourceRecord{
 			Name:       record[0],
-			Department: record[1],
-			Goes:       record[2],
-			LunchTeam:  record[3],
+			CoffeeTeam: record[1],
+			Team:       record[2],
 		})
 	}
 	return &resource, nil
@@ -226,7 +224,7 @@ func (c *LuccaClient) fetchUsers(ctx context.Context) ([]luccaUser, error) {
 		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf(`Get %s: got status %d and body %q`, url, resp.StatusCode, body)
+		return nil, fmt.Errorf(`get %s: got status %d and body %q`, url, resp.StatusCode, body)
 	}
 
 	var users struct {
@@ -278,7 +276,7 @@ func (c *LuccaClient) fetchLeaves(ctx context.Context) ([]luccaLeave, error) {
 		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf(`Get %s: got status %d and body %q`, url, resp.StatusCode, body)
+		return nil, fmt.Errorf(`get %s: got status %d and body %q`, url, resp.StatusCode, body)
 	}
 
 	var leaves struct {
