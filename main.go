@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	_ "embed"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -15,10 +17,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/net/html"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,8 +41,7 @@ func main() {
 		},
 		tmpl: template.Must(template.ParseFiles("templates/index.html")),
 
-		legalEntity:   os.Getenv("LEGAL_ENTITY"),
-		swapExclusion: os.Getenv("SWAP_EXCLUSION"),
+		legalEntity: os.Getenv("LEGAL_ENTITY"),
 	})
 
 	port := os.Getenv("PORT")
@@ -55,8 +57,7 @@ type handler struct {
 	luccaClient LuccaClient
 	tmpl        *template.Template
 
-	legalEntity   string
-	swapExclusion string
+	legalEntity string
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -107,28 +108,44 @@ func (h *handler) handle(ctx context.Context) (*Resource, error) {
 		return nil, err
 	}
 
-	csvOut, err := h.runAlgo(ctx, models)
+	shuffled, err := shuffle(ctx, filter(models))
+	if err != nil {
+		return nil, err
+	}
+
+	csvbuf := new(bytes.Buffer)
+	w := csv.NewWriter(csvbuf)
+	if err := w.Write([]string{"name", "coffee team", "team"}); err != nil {
+		return nil, err
+	}
+	for i := range shuffled {
+		if err := w.Write([]string{shuffled[i].Name, shuffled[i].CoffeeTeam, shuffled[i].Department}); err != nil {
+			return nil, err
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+	csvbytes := csvbuf.Bytes()
+
+	xlsbytes, err := csvToXLS(ctx, csvbytes)
 	if eerr, ok := err.(*exec.ExitError); ok {
 		return nil, errors.New(string(eerr.Stderr))
 	} else if err != nil {
 		return nil, err
 	}
 
-	xlsOut, err := csvToXLS(ctx, csvOut)
-	if eerr, ok := err.(*exec.ExitError); ok {
-		return nil, errors.New(string(eerr.Stderr))
-	} else if err != nil {
-		return nil, err
+	resource := Resource{
+		csv: csvbytes,
+		xls: xlsbytes,
 	}
-
-	resource := Resource{csv: csvOut, xls: xlsOut}
-	records, _ := csv.NewReader(bytes.NewReader(csvOut)).ReadAll()
-	resource.CSVHeader = records[0]
-	for _, record := range records[1:] {
+	resource.CSVHeader = []string{"name", "coffee team", "team"}
+	for i := range shuffled {
 		resource.Records = append(resource.Records, ResourceRecord{
-			Name:       record[0],
-			CoffeeTeam: record[1],
-			Team:       record[2],
+			Name:       shuffled[i].Name,
+			CoffeeTeam: shuffled[i].CoffeeTeam,
+			Team:       shuffled[i].Department,
 		})
 	}
 	return &resource, nil
@@ -137,6 +154,8 @@ func (h *handler) handle(ctx context.Context) (*Resource, error) {
 type Model struct {
 	Name, Department, LegalEntity string
 	HalfDayLeaves                 int
+
+	CoffeeTeam string
 }
 
 func (h *handler) fetch(ctx context.Context) ([]Model, error) {
@@ -412,30 +431,71 @@ func (c *LuccaClient) postLogin(ctx context.Context, values url.Values) error {
 	return nil
 }
 
-// runAlgo build the csv input for swap.py, runs swap.py and returns csv output
-func (h *handler) runAlgo(ctx context.Context, users []Model) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	csvWriter := csv.NewWriter(buf)
-	if err := csvWriter.Write([]string{"name", "department", "legal-entity", "half-day-leaves"}); err != nil {
+func filter(users []Model) []Model {
+	exclusion := os.Getenv("SWAP_EXCLUSION")
+	excluded := strings.Split(exclusion, ",")
+	var filtered []Model
+	for i := range users {
+		if users[i].HalfDayLeaves >= 4 {
+			continue
+		}
+		var exclude bool
+		for j := range excluded {
+			if users[i].Name == excluded[j] {
+				exclude = true
+				break
+			}
+		}
+		if exclude {
+			continue
+		}
+		filtered = append(filtered, users[i])
+	}
+	return filtered
+}
+
+//go:embed query.sql
+var sufflequery string
+
+func shuffle(ctx context.Context, users []Model) ([]Model, error) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
 		return nil, err
 	}
-	var records [][]string
-	for _, u := range users {
-		records = append(records,
-			[]string{u.Name, u.Department, u.LegalEntity, strconv.Itoa(u.HalfDayLeaves)},
-		)
-	}
-	if err := csvWriter.WriteAll(records); err != nil {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
 		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE users (name, team)`); err != nil {
+		return nil, err
+	}
+	for i := range users {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO users(name, team) VALUES($1, $2)`,
+			users[i].Name,
+			users[i].Department,
+		); err != nil {
+			return nil, err
+		}
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", "swap.py")
-	cmd.Env = []string{
-		"PYTHONIOENCODING=utf-8",
-		"SWAP_EXCLUSION=" + h.swapExclusion,
+	rows, err := tx.QueryContext(ctx, sufflequery, len(users)/3)
+	if err != nil {
+		return nil, err
 	}
-	cmd.Stdin = buf
-	return cmd.Output()
+	defer rows.Close()
+	var shuffled []Model
+	for rows.Next() {
+		var user Model
+		if err := rows.Scan(&user.CoffeeTeam, &user.Name, &user.Department); err != nil {
+			return nil, err
+		}
+		shuffled = append(shuffled, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return shuffled, nil
 }
 
 func csvToXLS(ctx context.Context, b []byte) ([]byte, error) {
