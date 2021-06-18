@@ -38,9 +38,8 @@ func main() {
 		},
 		tmpl: template.Must(template.ParseFiles("templates/index.html")),
 
-		legalEntity:        os.Getenv("LEGAL_ENTITY"),
-		swapExclusion:      os.Getenv("SWAP_EXCLUSION"),
-		swapLunchExclusion: os.Getenv("SWAP_LUNCH_EXCLUSION"),
+		legalEntity:   os.Getenv("LEGAL_ENTITY"),
+		swapExclusion: os.Getenv("SWAP_EXCLUSION"),
 	})
 
 	port := os.Getenv("PORT")
@@ -56,8 +55,8 @@ type handler struct {
 	luccaClient LuccaClient
 	tmpl        *template.Template
 
-	legalEntity                       string
-	swapExclusion, swapLunchExclusion string
+	legalEntity   string
+	swapExclusion string
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +433,6 @@ func (h *handler) runAlgo(ctx context.Context, users []Model) ([]byte, error) {
 	cmd.Env = []string{
 		"PYTHONIOENCODING=utf-8",
 		"SWAP_EXCLUSION=" + h.swapExclusion,
-		"SWAP_LUNCH_EXCLUSION=" + h.swapLunchExclusion,
 	}
 	cmd.Stdin = buf
 	return cmd.Output()

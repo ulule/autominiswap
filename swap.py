@@ -14,7 +14,7 @@ choice = random.SystemRandom().choice
 sample = random.SystemRandom().sample
 
 SWAP_EXCLUSION = [name.lower() for name in os.getenv('SWAP_EXCLUSION', "").split(',')]
-
+SWAP_VACATION_LIMIT = 4
 
 def get_data(delimiter=','):
     reader = csv.reader(sys.stdin, delimiter=delimiter)
@@ -25,7 +25,7 @@ def get_data(delimiter=','):
 def select_swap_people(people):
     people_by_dpt = defaultdict(list)
     for person, dpt, vacation in people:
-        if person.lower() not in SWAP_LUNCH_EXCLUSION and vacation < SWAP_LUNCH_VACATION_LIMIT:
+        if person.lower() not in SWAP_EXCLUSION and vacation < SWAP_VACATION_LIMIT:
             people_by_dpt[dpt].append(person)
 
     return people_by_dpt
